@@ -1,0 +1,38 @@
+{
+  "tests": [
+    {
+      "name": "Get all documents without auth (public access)",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "documents": "array"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Search documents by query",
+      "method": "GET",
+      "path": "/?search=1N-109",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "documents": "array"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Register document without auth token",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "document_type": "Договор купли-продажи",
+        "document_date": "2024-01-15",
+        "party1_name": "Тестов Тест Тестович",
+        "party1_passport": "1234 567890",
+        "subject": "Тестовый документ"
+      },
+      "expectedStatus": 401,
+      "bodyMatcher": "partial"
+    }
+  ]
+}

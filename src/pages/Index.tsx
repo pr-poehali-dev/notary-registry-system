@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,32 +10,204 @@ import Icon from '@/components/ui/icon';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-
-interface Document {
-  id: string;
-  number: string;
-  date: string;
-  type: string;
-  status: string;
-  parties: string;
-}
+import { useAuth } from '@/contexts/AuthContext';
+import { documents, activity, Document, Activity } from '@/lib/api';
+import { toast } from 'sonner';
 
 const Index = () => {
+  const { user, token, login, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('home');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   
-  const mockDocuments: Document[] = [
-    { id: '1', number: '1N-109/2012', date: '15.01.2024', type: 'Договор купли-продажи', status: 'Зарегистрирован', parties: 'Иванов И.И., Петров П.П.' },
-    { id: '2', number: '2N-202/2019', date: '20.02.2024', type: 'Доверенность', status: 'Зарегистрирован', parties: 'Сидоров С.С.' },
-    { id: '3', number: '3N-305/2023', date: '10.03.2024', type: 'Завещание', status: 'В обработке', parties: 'Козлов К.К.' },
-  ];
+  // Documents state
+  const [allDocuments, setAllDocuments] = useState<Document[]>([]);
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+  
+  // Activity log state
+  const [activityLog, setActivityLog] = useState<Activity[]>([]);
+  const [isLoadingActivity, setIsLoadingActivity] = useState(false);
+  
+  // Document registration form state
+  const [regNumber, setRegNumber] = useState('');
+  const [regType, setRegType] = useState('');
+  const [regDate, setRegDate] = useState('');
+  const [regParty1Name, setRegParty1Name] = useState('');
+  const [regParty1Passport, setRegParty1Passport] = useState('');
+  const [regParty2Name, setRegParty2Name] = useState('');
+  const [regParty2Passport, setRegParty2Passport] = useState('');
+  const [regSubject, setRegSubject] = useState('');
+  const [regNotes, setRegNotes] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
 
-  const filteredDocuments = mockDocuments.filter(doc =>
-    doc.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    doc.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    doc.parties.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Load documents on component mount
+  useEffect(() => {
+    loadDocuments();
+  }, []);
+
+  // Load activity log when user logs in or cabinet tab is opened
+  useEffect(() => {
+    if (user && token && activeTab === 'cabinet') {
+      loadActivityLog();
+    }
+  }, [user, token, activeTab]);
+
+  const loadDocuments = async (searchParams?: { search?: string; type?: string; status?: string }) => {
+    setIsLoadingDocuments(true);
+    try {
+      const docs = await documents.getAll(searchParams);
+      setAllDocuments(docs);
+    } catch (error) {
+      toast.error('Ошибка загрузки документов', {
+        description: error instanceof Error ? error.message : 'Не удалось загрузить документы'
+      });
+    } finally {
+      setIsLoadingDocuments(false);
+    }
+  };
+
+  const loadActivityLog = async () => {
+    if (!token) return;
+    
+    setIsLoadingActivity(true);
+    try {
+      const activities = await activity.getHistory(token);
+      setActivityLog(activities);
+    } catch (error) {
+      toast.error('Ошибка загрузки истории', {
+        description: error instanceof Error ? error.message : 'Не удалось загрузить историю действий'
+      });
+    } finally {
+      setIsLoadingActivity(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!loginEmail || !loginPassword) {
+      toast.error('Ошибка входа', {
+        description: 'Пожалуйста, заполните все поля'
+      });
+      return;
+    }
+
+    setIsLoggingIn(true);
+    try {
+      await login(loginEmail, loginPassword);
+      toast.success('Вход выполнен', {
+        description: 'Добро пожаловать в систему!'
+      });
+      setIsLoginDialogOpen(false);
+      setLoginEmail('');
+      setLoginPassword('');
+    } catch (error) {
+      toast.error('Ошибка входа', {
+        description: error instanceof Error ? error.message : 'Неверный логин или пароль'
+      });
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    toast.info('Выход выполнен', {
+      description: 'До свидания!'
+    });
+    setActiveTab('home');
+  };
+
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    if (query.trim()) {
+      await loadDocuments({ search: query });
+    } else {
+      await loadDocuments();
+    }
+  };
+
+  const handleRegisterDocument = async () => {
+    if (!user || (user.role !== 'notary' && user.role !== 'admin')) {
+      toast.error('Ошибка доступа', {
+        description: 'У вас нет прав для регистрации документов'
+      });
+      return;
+    }
+
+    if (!token || !regNumber || !regType || !regDate || !regParty1Name || !regParty1Passport || !regSubject) {
+      toast.error('Ошибка регистрации', {
+        description: 'Пожалуйста, заполните все обязательные поля'
+      });
+      return;
+    }
+
+    setIsRegistering(true);
+    try {
+      const documentData = {
+        number: regNumber,
+        type: regType,
+        date: regDate,
+        party1_name: regParty1Name,
+        party1_passport: regParty1Passport,
+        party2_name: regParty2Name || undefined,
+        party2_passport: regParty2Passport || undefined,
+        subject: regSubject,
+        notes: regNotes || undefined
+      };
+
+      await documents.create(token, documentData);
+      
+      toast.success('Документ зарегистрирован', {
+        description: `Документ ${regNumber} успешно добавлен в реестр`
+      });
+
+      // Reset form
+      setRegNumber('');
+      setRegType('');
+      setRegDate('');
+      setRegParty1Name('');
+      setRegParty1Passport('');
+      setRegParty2Name('');
+      setRegParty2Passport('');
+      setRegSubject('');
+      setRegNotes('');
+
+      // Reload documents
+      await loadDocuments();
+    } catch (error) {
+      toast.error('Ошибка регистрации', {
+        description: error instanceof Error ? error.message : 'Не удалось зарегистрировать документ'
+      });
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const filteredDocuments = allDocuments;
+
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('ru-RU');
+    } catch {
+      return dateString;
+    }
+  };
+
+  const getActionTypeLabel = (actionType: string) => {
+    const labels: Record<string, string> = {
+      'document_created': 'Создание документа',
+      'document_updated': 'Обновление документа',
+      'document_viewed': 'Просмотр документа',
+      'login': 'Вход в систему',
+      'logout': 'Выход из системы'
+    };
+    return labels[actionType] || actionType;
+  };
+
+  const canRegisterDocuments = user && (user.role === 'notary' || user.role === 'admin');
 
   return (
     <div className="min-h-screen bg-background">
@@ -78,6 +250,7 @@ const Index = () => {
                 variant={activeTab === 'register' ? 'secondary' : 'ghost'} 
                 onClick={() => setActiveTab('register')}
                 className="text-primary-foreground hover:bg-secondary/20"
+                disabled={!canRegisterDocuments}
               >
                 <Icon name="FilePlus" size={18} className="mr-2" />
                 Регистрация
@@ -99,31 +272,69 @@ const Index = () => {
                 Помощь
               </Button>
             </nav>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="secondary">
-                  <Icon name="LogIn" size={18} className="mr-2" />
-                  Войти
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Вход в систему</DialogTitle>
-                  <DialogDescription>Введите ваши учетные данные для доступа к личному кабинету</DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="login">Логин</Label>
-                    <Input id="login" placeholder="Введите логин" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Пароль</Label>
-                    <Input id="password" type="password" placeholder="Введите пароль" />
-                  </div>
-                  <Button className="w-full" onClick={() => setIsLoggedIn(true)}>Войти</Button>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <div className="text-sm font-medium">{user.full_name}</div>
+                  <div className="text-xs opacity-75">{user.role === 'notary' ? 'Нотариус' : user.role === 'admin' ? 'Администратор' : 'Пользователь'}</div>
                 </div>
-              </DialogContent>
-            </Dialog>
+                <Button variant="secondary" onClick={handleLogout}>
+                  <Icon name="LogOut" size={18} className="mr-2" />
+                  Выйти
+                </Button>
+              </div>
+            ) : (
+              <Dialog open={isLoginDialogOpen} onOpenChange={setIsLoginDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="secondary">
+                    <Icon name="LogIn" size={18} className="mr-2" />
+                    Войти
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Вход в систему</DialogTitle>
+                    <DialogDescription>Введите ваши учетные данные для доступа к личному кабинету</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="login">Email</Label>
+                      <Input 
+                        id="login" 
+                        type="email"
+                        placeholder="Введите email" 
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        disabled={isLoggingIn}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="password">Пароль</Label>
+                      <Input 
+                        id="password" 
+                        type="password" 
+                        placeholder="Введите пароль" 
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        disabled={isLoggingIn}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handleLogin();
+                          }
+                        }}
+                      />
+                    </div>
+                    <Button 
+                      className="w-full" 
+                      onClick={handleLogin}
+                      disabled={isLoggingIn}
+                    >
+                      {isLoggingIn ? 'Вход...' : 'Войти'}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
           </div>
         </div>
       </header>
@@ -179,51 +390,44 @@ const Index = () => {
                 </CardHeader>
               </Card>
 
-              <Card className="hover-scale cursor-pointer" onClick={() => setActiveTab('help')}>
-                <CardHeader>
-                  <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
-                    <Icon name="HelpCircle" size={24} className="text-primary" />
-                  </div>
-                  <CardTitle>Инструкции и помощь</CardTitle>
-                  <CardDescription>Руководства по работе с системой и ответы на вопросы</CardDescription>
-                </CardHeader>
-              </Card>
-
               <Card className="hover-scale">
                 <CardHeader>
                   <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
                     <Icon name="Shield" size={24} className="text-primary" />
                   </div>
-                  <CardTitle>Безопасность</CardTitle>
-                  <CardDescription>Защищенное хранение данных и контроль доступа</CardDescription>
+                  <CardTitle>Защита данных</CardTitle>
+                  <CardDescription>Все документы защищены современными средствами криптографии</CardDescription>
+                </CardHeader>
+              </Card>
+
+              <Card className="hover-scale cursor-pointer" onClick={() => setActiveTab('help')}>
+                <CardHeader>
+                  <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                    <Icon name="HelpCircle" size={24} className="text-primary" />
+                  </div>
+                  <CardTitle>Справка</CardTitle>
+                  <CardDescription>Руководство пользователя и ответы на частые вопросы</CardDescription>
                 </CardHeader>
               </Card>
             </div>
 
-            <Card className="bg-primary/5 border-primary/20">
+            <Card className="mt-12">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Icon name="Info" size={20} />
-                  Статистика системы
-                </CardTitle>
+                <CardTitle>Статистика системы</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid md:grid-cols-4 gap-6">
+                <div className="grid md:grid-cols-3 gap-6">
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-primary">1,247</div>
-                    <div className="text-sm text-muted-foreground mt-1">Всего документов</div>
+                    <div className="text-4xl font-bold text-primary">{allDocuments.length}</div>
+                    <div className="text-muted-foreground mt-2">Документов в реестре</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-primary">23</div>
-                    <div className="text-sm text-muted-foreground mt-1">За последний месяц</div>
+                    <div className="text-4xl font-bold text-primary">{allDocuments.filter(d => d.status === 'Зарегистрирован').length}</div>
+                    <div className="text-muted-foreground mt-2">Зарегистрировано</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-primary">156</div>
-                    <div className="text-sm text-muted-foreground mt-1">Активных пользователей</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-primary">99.8%</div>
-                    <div className="text-sm text-muted-foreground mt-1">Время доступности</div>
+                    <div className="text-4xl font-bold text-primary">{allDocuments.filter(d => d.status === 'В обработке').length}</div>
+                    <div className="text-muted-foreground mt-2">В обработке</div>
                   </div>
                 </div>
               </CardContent>
@@ -234,72 +438,57 @@ const Index = () => {
         {activeTab === 'registry' && (
           <div className="space-y-6 animate-fade-in">
             <div>
-              <h2 className="text-3xl font-bold mb-2">Реестр документов</h2>
-              <p className="text-muted-foreground">Полный перечень зарегистрированных нотариальных документов</p>
+              <h2 className="text-3xl font-bold">Реестр документов</h2>
+              <p className="text-muted-foreground mt-2">Полный список всех зарегистрированных документов</p>
             </div>
 
             <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>Список документов</CardTitle>
-                  <div className="flex gap-2">
-                    <Select defaultValue="all">
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Тип документа" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Все типы</SelectItem>
-                        <SelectItem value="contract">Договор</SelectItem>
-                        <SelectItem value="power">Доверенность</SelectItem>
-                        <SelectItem value="will">Завещание</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Select defaultValue="all-status">
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Статус" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all-status">Все статусы</SelectItem>
-                        <SelectItem value="registered">Зарегистрирован</SelectItem>
-                        <SelectItem value="processing">В обработке</SelectItem>
-                      </SelectContent>
-                    </Select>
+              <CardContent className="pt-6">
+                {isLoadingDocuments ? (
+                  <div className="text-center py-8">
+                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                    <p className="mt-4 text-muted-foreground">Загрузка документов...</p>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Номер документа</TableHead>
-                      <TableHead>Дата регистрации</TableHead>
-                      <TableHead>Тип документа</TableHead>
-                      <TableHead>Стороны</TableHead>
-                      <TableHead>Статус</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {mockDocuments.map((doc) => (
-                      <TableRow key={doc.id}>
-                        <TableCell className="font-medium">{doc.number}</TableCell>
-                        <TableCell>{doc.date}</TableCell>
-                        <TableCell>{doc.type}</TableCell>
-                        <TableCell>{doc.parties}</TableCell>
-                        <TableCell>
-                          <Badge variant={doc.status === 'Зарегистрирован' ? 'default' : 'secondary'}>
-                            {doc.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm">
-                            <Icon name="Eye" size={16} />
-                          </Button>
-                        </TableCell>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Номер</TableHead>
+                        <TableHead>Дата</TableHead>
+                        <TableHead>Тип документа</TableHead>
+                        <TableHead>Статус</TableHead>
+                        <TableHead>Стороны</TableHead>
+                        <TableHead>Предмет</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredDocuments.map((doc) => (
+                        <TableRow key={doc.id}>
+                          <TableCell className="font-medium">{doc.number}</TableCell>
+                          <TableCell>{formatDate(doc.date)}</TableCell>
+                          <TableCell>{doc.type}</TableCell>
+                          <TableCell>
+                            <Badge variant={doc.status === 'Зарегистрирован' ? 'default' : 'secondary'}>
+                              {doc.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {doc.party1_name}
+                            {doc.party2_name && `, ${doc.party2_name}`}
+                          </TableCell>
+                          <TableCell className="max-w-xs truncate">{doc.subject}</TableCell>
+                        </TableRow>
+                      ))}
+                      {filteredDocuments.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                            Документы не найдены
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -308,8 +497,8 @@ const Index = () => {
         {activeTab === 'search' && (
           <div className="space-y-6 animate-fade-in">
             <div>
-              <h2 className="text-3xl font-bold mb-2">Поиск документов</h2>
-              <p className="text-muted-foreground">Найдите нужный документ по различным параметрам</p>
+              <h2 className="text-3xl font-bold">Поиск документов</h2>
+              <p className="text-muted-foreground mt-2">Найдите нужный документ по номеру, типу или сторонам</p>
             </div>
 
             <Card>
@@ -317,279 +506,347 @@ const Index = () => {
                 <CardTitle>Параметры поиска</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="search-number">Номер документа</Label>
-                    <Input 
-                      id="search-number" 
-                      placeholder="Например: 1N-109/2012"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="search-date">Дата регистрации</Label>
-                    <Input id="search-date" type="date" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="search-type">Тип документа</Label>
-                    <Select>
-                      <SelectTrigger id="search-type">
-                        <SelectValue placeholder="Выберите тип" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="contract">Договор купли-продажи</SelectItem>
-                        <SelectItem value="power">Доверенность</SelectItem>
-                        <SelectItem value="will">Завещание</SelectItem>
-                        <SelectItem value="other">Другое</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="search-parties">ФИО сторон</Label>
-                    <Input id="search-parties" placeholder="Введите ФИО" />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="search">Поиск</Label>
+                  <Input 
+                    id="search" 
+                    placeholder="Введите номер документа, тип или имя стороны" 
+                    value={searchQuery}
+                    onChange={(e) => handleSearch(e.target.value)}
+                  />
                 </div>
-                <Button className="w-full md:w-auto">
-                  <Icon name="Search" size={18} className="mr-2" />
-                  Найти документ
-                </Button>
               </CardContent>
             </Card>
 
-            {searchQuery && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Результаты поиска ({filteredDocuments.length})</CardTitle>
-                </CardHeader>
-                <CardContent>
+            <Card>
+              <CardHeader>
+                <CardTitle>Результаты поиска</CardTitle>
+                <CardDescription>
+                  {isLoadingDocuments ? 'Поиск...' : `Найдено документов: ${filteredDocuments.length}`}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingDocuments ? (
+                  <div className="text-center py-8">
+                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                    <p className="mt-4 text-muted-foreground">Поиск документов...</p>
+                  </div>
+                ) : (
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Номер документа</TableHead>
+                        <TableHead>Номер</TableHead>
                         <TableHead>Дата</TableHead>
-                        <TableHead>Тип</TableHead>
-                        <TableHead>Стороны</TableHead>
+                        <TableHead>Тип документа</TableHead>
                         <TableHead>Статус</TableHead>
-                        <TableHead></TableHead>
+                        <TableHead>Стороны</TableHead>
+                        <TableHead>Предмет</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredDocuments.map((doc) => (
                         <TableRow key={doc.id}>
                           <TableCell className="font-medium">{doc.number}</TableCell>
-                          <TableCell>{doc.date}</TableCell>
+                          <TableCell>{formatDate(doc.date)}</TableCell>
                           <TableCell>{doc.type}</TableCell>
-                          <TableCell>{doc.parties}</TableCell>
                           <TableCell>
                             <Badge variant={doc.status === 'Зарегистрирован' ? 'default' : 'secondary'}>
                               {doc.status}
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Button variant="ghost" size="sm">
-                              <Icon name="Eye" size={16} />
-                            </Button>
+                            {doc.party1_name}
+                            {doc.party2_name && `, ${doc.party2_name}`}
                           </TableCell>
+                          <TableCell className="max-w-xs truncate">{doc.subject}</TableCell>
                         </TableRow>
                       ))}
+                      {filteredDocuments.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                            {searchQuery ? 'По вашему запросу ничего не найдено' : 'Введите параметры поиска'}
+                          </TableCell>
+                        </TableRow>
+                      )}
                     </TableBody>
                   </Table>
-                </CardContent>
-              </Card>
-            )}
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
 
         {activeTab === 'register' && (
           <div className="space-y-6 animate-fade-in">
             <div>
-              <h2 className="text-3xl font-bold mb-2">Регистрация документов</h2>
-              <p className="text-muted-foreground">Внесение нового документа в единый реестр</p>
+              <h2 className="text-3xl font-bold">Регистрация документа</h2>
+              <p className="text-muted-foreground mt-2">Внесение нового документа в реестр</p>
             </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Форма регистрации</CardTitle>
-                <CardDescription>Заполните все обязательные поля для регистрации документа</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="doc-type">Тип документа *</Label>
-                    <Select>
-                      <SelectTrigger id="doc-type">
-                        <SelectValue placeholder="Выберите тип" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="contract">Договор купли-продажи</SelectItem>
-                        <SelectItem value="power">Доверенность</SelectItem>
-                        <SelectItem value="will">Завещание</SelectItem>
-                        <SelectItem value="other">Другое</SelectItem>
-                      </SelectContent>
-                    </Select>
+            {!canRegisterDocuments ? (
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="text-center py-8">
+                    <Icon name="Lock" size={48} className="mx-auto text-muted-foreground mb-4" />
+                    <h3 className="text-xl font-semibold mb-2">Доступ ограничен</h3>
+                    <p className="text-muted-foreground">
+                      Регистрация документов доступна только для нотариусов и администраторов.
+                      {!user && ' Пожалуйста, войдите в систему.'}
+                    </p>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="doc-date">Дата оформления *</Label>
-                    <Input id="doc-date" type="date" />
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Данные документа</CardTitle>
+                  <CardDescription>Заполните все обязательные поля для регистрации</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-number">Номер документа *</Label>
+                      <Input 
+                        id="reg-number" 
+                        placeholder="Например: 1N-109/2024" 
+                        value={regNumber}
+                        onChange={(e) => setRegNumber(e.target.value)}
+                        disabled={isRegistering}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-type">Тип документа *</Label>
+                      <Select value={regType} onValueChange={setRegType} disabled={isRegistering}>
+                        <SelectTrigger id="reg-type">
+                          <SelectValue placeholder="Выберите тип" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Договор купли-продажи">Договор купли-продажи</SelectItem>
+                          <SelectItem value="Доверенность">Доверенность</SelectItem>
+                          <SelectItem value="Завещание">Завещание</SelectItem>
+                          <SelectItem value="Согласие">Согласие</SelectItem>
+                          <SelectItem value="Свидетельство">Свидетельство</SelectItem>
+                          <SelectItem value="Договор дарения">Договор дарения</SelectItem>
+                          <SelectItem value="Договор аренды">Договор аренды</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
+
                   <div className="space-y-2">
-                    <Label htmlFor="party1">Сторона 1 (ФИО) *</Label>
-                    <Input id="party1" placeholder="Введите ФИО" />
+                    <Label htmlFor="reg-date">Дата документа *</Label>
+                    <Input 
+                      id="reg-date" 
+                      type="date" 
+                      value={regDate}
+                      onChange={(e) => setRegDate(e.target.value)}
+                      disabled={isRegistering}
+                    />
                   </div>
+
+                  <div className="border-t pt-4">
+                    <h3 className="font-semibold mb-4">Первая сторона *</h3>
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="party1-name">ФИО *</Label>
+                        <Input 
+                          id="party1-name" 
+                          placeholder="Иванов Иван Иванович" 
+                          value={regParty1Name}
+                          onChange={(e) => setRegParty1Name(e.target.value)}
+                          disabled={isRegistering}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="party1-passport">Паспорт *</Label>
+                        <Input 
+                          id="party1-passport" 
+                          placeholder="1234 567890" 
+                          value={regParty1Passport}
+                          onChange={(e) => setRegParty1Passport(e.target.value)}
+                          disabled={isRegistering}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t pt-4">
+                    <h3 className="font-semibold mb-4">Вторая сторона (опционально)</h3>
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="party2-name">ФИО</Label>
+                        <Input 
+                          id="party2-name" 
+                          placeholder="Петров Петр Петрович" 
+                          value={regParty2Name}
+                          onChange={(e) => setRegParty2Name(e.target.value)}
+                          disabled={isRegistering}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="party2-passport">Паспорт</Label>
+                        <Input 
+                          id="party2-passport" 
+                          placeholder="1234 567890" 
+                          value={regParty2Passport}
+                          onChange={(e) => setRegParty2Passport(e.target.value)}
+                          disabled={isRegistering}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
-                    <Label htmlFor="party1-passport">Паспортные данные стороны 1 *</Label>
-                    <Input id="party1-passport" placeholder="Серия и номер" />
+                    <Label htmlFor="reg-subject">Предмет документа *</Label>
+                    <Textarea 
+                      id="reg-subject" 
+                      placeholder="Краткое описание предмета документа" 
+                      value={regSubject}
+                      onChange={(e) => setRegSubject(e.target.value)}
+                      disabled={isRegistering}
+                    />
                   </div>
+
                   <div className="space-y-2">
-                    <Label htmlFor="party2">Сторона 2 (ФИО)</Label>
-                    <Input id="party2" placeholder="Введите ФИО" />
+                    <Label htmlFor="reg-notes">Примечания</Label>
+                    <Textarea 
+                      id="reg-notes" 
+                      placeholder="Дополнительные примечания (опционально)" 
+                      value={regNotes}
+                      onChange={(e) => setRegNotes(e.target.value)}
+                      disabled={isRegistering}
+                    />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="party2-passport">Паспортные данные стороны 2</Label>
-                    <Input id="party2-passport" placeholder="Серия и номер" />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="doc-subject">Предмет документа *</Label>
-                  <Textarea id="doc-subject" placeholder="Краткое описание предмета документа" rows={4} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="doc-notes">Дополнительные сведения</Label>
-                  <Textarea id="doc-notes" placeholder="Дополнительная информация" rows={3} />
-                </div>
-                <div className="flex gap-2">
-                  <Button className="w-full md:w-auto">
-                    <Icon name="Save" size={18} className="mr-2" />
-                    Зарегистрировать документ
+
+                  <Button 
+                    className="w-full" 
+                    onClick={handleRegisterDocument}
+                    disabled={isRegistering}
+                  >
+                    {isRegistering ? (
+                      <>
+                        <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Регистрация...
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="FilePlus" size={18} className="mr-2" />
+                        Зарегистрировать документ
+                      </>
+                    )}
                   </Button>
-                  <Button variant="outline" className="w-full md:w-auto">
-                    Очистить форму
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
 
         {activeTab === 'cabinet' && (
           <div className="space-y-6 animate-fade-in">
             <div>
-              <h2 className="text-3xl font-bold mb-2">Личный кабинет</h2>
-              <p className="text-muted-foreground">Управление профилем и просмотр истории</p>
+              <h2 className="text-3xl font-bold">Личный кабинет</h2>
+              <p className="text-muted-foreground mt-2">Управление профилем и просмотр истории действий</p>
             </div>
 
-            {!isLoggedIn ? (
+            {!user ? (
               <Card>
-                <CardHeader>
-                  <CardTitle>Требуется авторизация</CardTitle>
-                  <CardDescription>Войдите в систему для доступа к личному кабинету</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button>
-                        <Icon name="LogIn" size={18} className="mr-2" />
-                        Войти в систему
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Вход в систему</DialogTitle>
-                        <DialogDescription>Введите ваши учетные данные</DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="login-cab">Логин</Label>
-                          <Input id="login-cab" placeholder="Введите логин" />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="password-cab">Пароль</Label>
-                          <Input id="password-cab" type="password" placeholder="Введите пароль" />
-                        </div>
-                        <Button className="w-full" onClick={() => setIsLoggedIn(true)}>Войти</Button>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
+                <CardContent className="pt-6">
+                  <div className="text-center py-8">
+                    <Icon name="User" size={48} className="mx-auto text-muted-foreground mb-4" />
+                    <h3 className="text-xl font-semibold mb-2">Требуется авторизация</h3>
+                    <p className="text-muted-foreground mb-4">
+                      Для доступа к личному кабинету необходимо войти в систему
+                    </p>
+                    <Button onClick={() => setIsLoginDialogOpen(true)}>
+                      <Icon name="LogIn" size={18} className="mr-2" />
+                      Войти
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid md:grid-cols-3 gap-6">
-                <Card className="md:col-span-1">
+              <>
+                <Card>
                   <CardHeader>
-                    <CardTitle>Профиль</CardTitle>
+                    <CardTitle>Информация о пользователе</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="flex items-center gap-4">
-                      <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
-                        <Icon name="User" size={32} className="text-primary" />
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-muted-foreground">ФИО</Label>
+                        <p className="font-medium">{user.full_name}</p>
                       </div>
                       <div>
-                        <div className="font-semibold">Иванов Иван Иванович</div>
-                        <div className="text-sm text-muted-foreground">Нотариус</div>
+                        <Label className="text-muted-foreground">Email</Label>
+                        <p className="font-medium">{user.email}</p>
                       </div>
+                      <div>
+                        <Label className="text-muted-foreground">Роль</Label>
+                        <p className="font-medium">
+                          {user.role === 'notary' ? 'Нотариус' : user.role === 'admin' ? 'Администратор' : 'Пользователь'}
+                        </p>
+                      </div>
+                      {user.phone && (
+                        <div>
+                          <Label className="text-muted-foreground">Телефон</Label>
+                          <p className="font-medium">{user.phone}</p>
+                        </div>
+                      )}
+                      {user.region && (
+                        <div>
+                          <Label className="text-muted-foreground">Регион</Label>
+                          <p className="font-medium">{user.region}</p>
+                        </div>
+                      )}
                     </div>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Email:</span>
-                        <span>ivanov@example.ru</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Телефон:</span>
-                        <span>+7 (999) 123-45-67</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Регион:</span>
-                        <span>Москва</span>
-                      </div>
-                    </div>
-                    <Button variant="outline" className="w-full">
-                      <Icon name="Settings" size={16} className="mr-2" />
-                      Настройки
-                    </Button>
                   </CardContent>
                 </Card>
 
-                <Card className="md:col-span-2">
+                <Card>
                   <CardHeader>
-                    <CardTitle>История операций</CardTitle>
+                    <CardTitle>История действий</CardTitle>
+                    <CardDescription>Последние операции в системе</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-4">
-                      <div className="flex items-start gap-4 p-4 border rounded-lg">
-                        <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
-                          <Icon name="FilePlus" size={20} className="text-primary" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-medium">Регистрация документа</div>
-                          <div className="text-sm text-muted-foreground">Договор купли-продажи №1N-109/2012</div>
-                          <div className="text-xs text-muted-foreground mt-1">15.01.2024, 14:30</div>
-                        </div>
+                    {isLoadingActivity ? (
+                      <div className="text-center py-8">
+                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                        <p className="mt-4 text-muted-foreground">Загрузка истории...</p>
                       </div>
-                      <div className="flex items-start gap-4 p-4 border rounded-lg">
-                        <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
-                          <Icon name="Search" size={20} className="text-primary" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-medium">Поиск документа</div>
-                          <div className="text-sm text-muted-foreground">Поиск по номеру 2N-202/2019</div>
-                          <div className="text-xs text-muted-foreground mt-1">14.01.2024, 11:20</div>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-4 p-4 border rounded-lg">
-                        <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
-                          <Icon name="Eye" size={20} className="text-primary" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-medium">Просмотр реестра</div>
-                          <div className="text-sm text-muted-foreground">Просмотр списка документов</div>
-                          <div className="text-xs text-muted-foreground mt-1">13.01.2024, 09:45</div>
-                        </div>
-                      </div>
-                    </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Дата и время</TableHead>
+                            <TableHead>Действие</TableHead>
+                            <TableHead>Описание</TableHead>
+                            <TableHead>Документ</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {activityLog.map((activity) => (
+                            <TableRow key={activity.id}>
+                              <TableCell>{new Date(activity.created_at).toLocaleString('ru-RU')}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline">{getActionTypeLabel(activity.action_type)}</Badge>
+                              </TableCell>
+                              <TableCell>{activity.description}</TableCell>
+                              <TableCell>{activity.document_number || '-'}</TableCell>
+                            </TableRow>
+                          ))}
+                          {activityLog.length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                                История действий пуста
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    )}
                   </CardContent>
                 </Card>
-              </div>
+              </>
             )}
           </div>
         )}
@@ -597,153 +854,81 @@ const Index = () => {
         {activeTab === 'help' && (
           <div className="space-y-6 animate-fade-in">
             <div>
-              <h2 className="text-3xl font-bold mb-2">Инструкции и помощь</h2>
-              <p className="text-muted-foreground">Руководства по работе с системой</p>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
-                    <Icon name="Book" size={24} className="text-primary" />
-                  </div>
-                  <CardTitle>Руководство пользователя</CardTitle>
-                  <CardDescription>Подробная инструкция по работе с системой регистрации документов</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button variant="outline">
-                    <Icon name="Download" size={16} className="mr-2" />
-                    Скачать PDF
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
-                    <Icon name="Video" size={24} className="text-primary" />
-                  </div>
-                  <CardTitle>Видеоинструкции</CardTitle>
-                  <CardDescription>Обучающие видеоролики по основным функциям системы</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button variant="outline">
-                    <Icon name="Play" size={16} className="mr-2" />
-                    Смотреть
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
-                    <Icon name="MessageCircle" size={24} className="text-primary" />
-                  </div>
-                  <CardTitle>Частые вопросы</CardTitle>
-                  <CardDescription>Ответы на наиболее распространенные вопросы пользователей</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button variant="outline">
-                    <Icon name="ExternalLink" size={16} className="mr-2" />
-                    Открыть FAQ
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
-                    <Icon name="Phone" size={24} className="text-primary" />
-                  </div>
-                  <CardTitle>Техподдержка</CardTitle>
-                  <CardDescription>Свяжитесь с нами для получения помощи</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2 text-sm">
-                    <div>📞 +7 (495) 123-45-67</div>
-                    <div>📧 support@notarinka.ru</div>
-                    <div>⏰ Пн-Пт: 9:00 - 18:00</div>
-                  </div>
-                </CardContent>
-              </Card>
+              <h2 className="text-3xl font-bold">Справка и помощь</h2>
+              <p className="text-muted-foreground mt-2">Руководство пользователя и ответы на частые вопросы</p>
             </div>
 
             <Card>
               <CardHeader>
-                <CardTitle>Основные разделы помощи</CardTitle>
+                <CardTitle>Как использовать систему</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <details className="group">
-                  <summary className="flex items-center justify-between cursor-pointer p-4 bg-muted/50 rounded-lg hover:bg-muted">
-                    <span className="font-medium">Как зарегистрировать новый документ?</span>
-                    <Icon name="ChevronDown" size={20} className="group-open:rotate-180 transition-transform" />
-                  </summary>
-                  <div className="p-4 text-sm text-muted-foreground">
-                    Для регистрации документа перейдите в раздел "Регистрация документов", заполните все обязательные поля формы и нажмите кнопку "Зарегистрировать документ". Система автоматически присвоит документу уникальный номер.
-                  </div>
-                </details>
+                <div>
+                  <h3 className="font-semibold mb-2">Поиск документов</h3>
+                  <p className="text-muted-foreground">
+                    Используйте раздел "Поиск" для быстрого нахождения документов по номеру, типу или сторонам договора.
+                    Введите ключевые слова в поле поиска, и система отобразит все подходящие результаты.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-2">Регистрация документов</h3>
+                  <p className="text-muted-foreground">
+                    Раздел "Регистрация" доступен только для нотариусов и администраторов. Заполните все обязательные поля формы
+                    и нажмите кнопку "Зарегистрировать документ". После успешной регистрации документ появится в общем реестре.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-2">Просмотр реестра</h3>
+                  <p className="text-muted-foreground">
+                    В разделе "Реестр" отображаются все зарегистрированные документы. Вы можете просматривать информацию
+                    о документах, включая номер, дату, тип, статус и стороны договора.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-2">Личный кабинет</h3>
+                  <p className="text-muted-foreground">
+                    В личном кабинете вы можете просмотреть свою информацию и историю действий в системе.
+                    Для доступа к кабинету необходимо войти в систему.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
 
-                <details className="group">
-                  <summary className="flex items-center justify-between cursor-pointer p-4 bg-muted/50 rounded-lg hover:bg-muted">
-                    <span className="font-medium">Как найти документ в реестре?</span>
-                    <Icon name="ChevronDown" size={20} className="group-open:rotate-180 transition-transform" />
-                  </summary>
-                  <div className="p-4 text-sm text-muted-foreground">
-                    Используйте раздел "Поиск документов" для быстрого поиска по номеру, дате, типу документа или ФИО сторон. Также доступен просмотр полного реестра в соответствующем разделе.
-                  </div>
-                </details>
-
-                <details className="group">
-                  <summary className="flex items-center justify-between cursor-pointer p-4 bg-muted/50 rounded-lg hover:bg-muted">
-                    <span className="font-medium">Как получить доступ к личному кабинету?</span>
-                    <Icon name="ChevronDown" size={20} className="group-open:rotate-180 transition-transform" />
-                  </summary>
-                  <div className="p-4 text-sm text-muted-foreground">
-                    Для доступа к личному кабинету необходимо войти в систему используя ваш логин и пароль. Если у вас нет учетных данных, обратитесь к администратору системы.
-                  </div>
-                </details>
+            <Card>
+              <CardHeader>
+                <CardTitle>Часто задаваемые вопросы</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <h3 className="font-semibold mb-2">Как получить доступ к системе?</h3>
+                  <p className="text-muted-foreground">
+                    Для получения доступа обратитесь к администратору системы. Вам будут предоставлены учетные данные
+                    для входа в систему.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-2">Кто может регистрировать документы?</h3>
+                  <p className="text-muted-foreground">
+                    Регистрировать документы в системе могут только пользователи с ролью "Нотариус" или "Администратор".
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-2">Как найти документ по номеру?</h3>
+                  <p className="text-muted-foreground">
+                    Перейдите в раздел "Поиск" и введите номер документа в поле поиска. Система автоматически найдет
+                    документ с указанным номером.
+                  </p>
+                </div>
               </CardContent>
             </Card>
           </div>
         )}
       </main>
 
-      <footer className="bg-secondary text-secondary-foreground mt-16">
-        <div className="container mx-auto px-4 py-8">
-          <div className="grid md:grid-cols-4 gap-8">
-            <div>
-              <h3 className="font-bold mb-4">О системе</h3>
-              <p className="text-sm opacity-90">Единая информационная система нотариального реестра для регистрации и учета документов</p>
-            </div>
-            <div>
-              <h3 className="font-bold mb-4">Разделы</h3>
-              <ul className="space-y-2 text-sm opacity-90">
-                <li className="cursor-pointer hover:opacity-100" onClick={() => setActiveTab('registry')}>Реестр документов</li>
-                <li className="cursor-pointer hover:opacity-100" onClick={() => setActiveTab('search')}>Поиск</li>
-                <li className="cursor-pointer hover:opacity-100" onClick={() => setActiveTab('register')}>Регистрация</li>
-                <li className="cursor-pointer hover:opacity-100" onClick={() => setActiveTab('help')}>Помощь</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-bold mb-4">Контакты</h3>
-              <ul className="space-y-2 text-sm opacity-90">
-                <li>+7 (495) 123-45-67</li>
-                <li>info@notarinka.ru</li>
-                <li>Москва, ул. Примерная, д. 1</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-bold mb-4">Документы</h3>
-              <ul className="space-y-2 text-sm opacity-90">
-                <li className="cursor-pointer hover:opacity-100">Политика конфиденциальности</li>
-                <li className="cursor-pointer hover:opacity-100">Пользовательское соглашение</li>
-                <li className="cursor-pointer hover:opacity-100">Техподдержка</li>
-              </ul>
-            </div>
-          </div>
-          <div className="border-t border-secondary-foreground/20 mt-8 pt-6 text-center text-sm opacity-75">
-            © 2024 НОТАРИНКА. Система регистрации документов. Все права защищены.
-          </div>
+      <footer className="bg-muted py-6 mt-12">
+        <div className="container mx-auto px-4 text-center text-muted-foreground">
+          <p>НОТАРИНКА - Система регистрации нотариальных документов</p>
+          <p className="text-sm mt-2">Все права защищены. При использовании материалов ссылка обязательна.</p>
         </div>
       </footer>
     </div>
